@@ -1,6 +1,6 @@
 # ETC5512: Assignment 4 - Modelling the Effect of Interventions on COVID-19 in Victoria
 
-This repository includes the work and materials for Assignment 4 of the ETC5512 unit (Wild-caught data).
+This repository contains the work and materials for Assignment 4 of the ETC5512 unit (Wild-caught data).
 
 ## Overview
 This assignment aims to quantify the effects of two interventions—local lockdowns and face coverings—implemented in Victoria on June 30, 2020, and July 23, 2020, respectively. The analysis covers the period from June 1 to September 13, 2020. The assignment assesses the ability to navigate new data sources, combine data from different sources, and write a reproducible report.
