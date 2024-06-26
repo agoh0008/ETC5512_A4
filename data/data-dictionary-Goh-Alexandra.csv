@@ -1,0 +1,8 @@
+﻿NAME,VARLABEL,ITEM SPECIFIC INFORMATION,TYPE,UNIT,FORMAT,VARNUM,MINMAX
+diagnosis_date,Diagnosis date,The date of COVID-19 diagnosis for a specific case.,DATE,,yyyy/mm/dd,1,
+postcode,Postcode,The postal/ZIP code corresponding to the geographical area where the COVID-19 case was reported.,NUM,,9(4),2,3000 - 3999
+lga_name,Local Government Area Name,The name of the Local Government Area (LGA) where the COVID-19 case was reported.,CHAR,,X(20),3,
+lga_code,Local Government Area Code,The code assigned to the Local Government Area (LGA) where the COVID-19 case was reported.,NUM,,9(5),4,20110 - 27630
+RAT_case_count,Number of RAT cases,"The daily count of COVID-19 cases detected through Rapid Antigen Testing (RAT) in the specific LGA and postcode, on a given date.",NUM,cases,9(3),5,0 - 382
+PCR_case_count,Number of PCR cases,"The daily count of COVID-19 cases detected through Polymerase Chain Reaction (PCR) testing in the specific LGA and postcode, on a given date.",NUM,cases,9(3),6,0 - 784
+Total_case_count,Total number of COVID-19 cases,"The total daily count of COVID-19 cases (including both RAT and PCR cases) in the specific LGA and postcode, on a given date.",NUM,cases,9(4),7,1 - 1123

@@ -1,0 +1,437 @@
+---
+title: "Modelling the effect of interventions on COVID-19 in Victoria"
+subtitle: ETC5512 Assignment 4, Master of Business Analytics
+author: Prepared by Alexandra Goh, 29796431, agoh0008@student.monash.edu 
+date: '`r Sys.Date()`'
+output: 
+  html_document:
+    css: monashreport.css
+    includes:
+      before_body: header.html
+---
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  eval = TRUE,
+  message = FALSE,
+  warning = FALSE
+)
+library(tidyverse)
+library(dplyr)
+library(readr)
+library(ggplot2)
+library(bookdown)
+library(deSolve)
+
+```
+
+# Data sources
+
+```{r, message=F, eval=T}
+
+vic_case_data <- read_csv(here::here("data/NCOV_cases_by_postcode_LGA.csv"))
+glimpse(vic_case_data)
+
+```
+The dataset [vic_case_data](https://docs.health.vic.gov.au/covid19/data/NCOV_cases_by_postcode_LGA.csv) was retrieved from the [Victorian Health Department](https://www.coronavirus.vic.gov.au/victorian-coronavirus-covid-19-data) and contains information on the total daily number of COVID-19 cases in Victoria, categorized by postcode and Local Government Area (LGA). It also includes data on cases detected through both Rapid Antigen Testing (RAT) and Polymerase Chain Reaction (PCR). This dataset is considered appropriate due to its detailed information about COVID-19 cases based on geographical regions and dates. It allows for deeper analysis at a more granular level and enables us to obtain insights on the impact of restrictions (i.e. local lockdowns and face coverings) in different Victorian regions over time. Utilizing this dataset can help assess the effectiveness of these restrictions in controlling the spread of COVID-19 and also identify areas that may require more targeted interventions. 
+
+It should be noted that this is an observational dataset, as it captures the actual/natural occurrence of detected COVID-19 cases without any intervention or manipulation by researchers. In contrast to experimental data (where effects are observed in more controlled settings), this dataset reflects real-world COVID-19 data that was collected by the Victorian Health Department and sourced through contact tracing.
+
+For more detailed information on each of the variables covered in the dataset, you may refer to the **"vic_case_codebook"** as shown below. 
+
+```{r codebook, message=F, eval=T}
+
+vic_case_codebook <- read_csv(here::here("data/data-dictionary-Goh-Alexandra.csv"))
+
+```
+
+Overall, the unit of this data is the total daily count of COVID-19 cases (either RAT-detected, PCR-detected, or total of both) in a specific Victorian Local Government Area and postcode for each particular date. By combining the columns **"postcode"**, **"lga_name"** and **"diagnosis_date"**, we can uniquely identify the total number of daily COVID-19 cases reported within a specific postcode and Local Government Area, for each particular diagnosis date. However, if we are interested in analyzing the total number of daily COVID-19 cases reported for each Local Government Area, combining **"lga_name"** or **"lga_code"** with **"diagnosis_date"** is sufficient.
+
+```{r, message=F, eval=T}
+
+head(vic_case_data)
+
+```
+
+As observed, the dataset is in a long format with each row corresponding to the total number of COVID-19 cases for each postcode and Local Government Area on a particular diagnosis date. While there is nothing wrong with the dataset's current form, we do still need to transform the data by grouping it and aggregating its values to retrieve the total number of COVID-19 cases across the whole of Victoria for each date. This involves grouping the dataset by "diagnosis_date" before aggregating the "Total_case_column" to calculate the sum of total COVID-19 cases for each date, regardless of region.    
+
+```{r transform, message=F, eval=T}
+
+vic_cases <- vic_case_data %>%
+  group_by(diagnosis_date) %>%
+  summarise(total_cases = sum(Total_case_count))
+
+vic_cases
+
+```
+
+
+# 🔍 Analysis
+
+The number of daily cases from 1st of June to 13th of September (2020) can be seen below:
+
+
+```{r timeseries, message=F, eval=T}
+
+fitting_start_date <- lubridate::ymd("20200601")
+fitting_end_date <- lubridate::ymd("20200913")
+
+plot_interval <- lubridate::interval(fitting_start_date, fitting_end_date)
+
+vic_cases %>%
+  filter(diagnosis_date %within% plot_interval) %>%
+  ggplot(aes(x = diagnosis_date, y = total_cases)) +
+  geom_col(fill = "steelblue", alpha = 0.8) +
+  labs(x = "Diagnosis Date", y = "Reported COVID-19 cases") +
+  ggtitle("Number of Daily COVID-19 Cases from 1st Jun to 13th Sep (2020)") +
+  geom_vline(aes(xintercept = ymd("20200630")), linetype = "dashed", color = "red") +
+  geom_vline(aes(xintercept = ymd("20200723")), linetype = "dashed", color = "darkblue") +
+  annotate("text", x = ymd("20200630"), y = Inf, label = "June 30", vjust = 1.5, color = "red") +
+  annotate("text", x = ymd("20200723"), y = Inf, label = "July 23", vjust = 1.5, color = "darkblue")
+
+
+```
+
+Based on what we can observe from the line graph below (i.e. red line represents the rolling average of 7-day growth rates), it appears that when local lockdowns started on 30th June 2020, the 7-day growth rate of COVID-19 cases began to decrease. This implies that the implementation of local lockdowns had a positive effective on slowing down the transmission of the virus. 
+
+However, this decline is relatively slow in comparison to the decrease in growth rates after the intervention of face coverings. From 23rd July onwards, it can be seen that there was a sharper drop in the 7-day growth rates of COVID-19 cases, therefore inferring that the implementation of mandatory face coverings was more effective in reducing the transmission of COVID-19 in Victoria.        
+
+```{r sevendaygrowth, message=F, eval=T}
+
+growth_rate <- vic_cases %>%
+  filter(diagnosis_date %within% plot_interval) %>% 
+  mutate(
+    growth_rate = slider::slide_dbl(
+      .x = total_cases,
+      .f = function(v) {log(v[7]/v[1]) / 7},
+      .before=6, 
+      .after = 0
+      ),
+    rolling_avg = slider::slide_dbl( 
+      .x = growth_rate,
+      .f = mean,
+      .before = 3,
+      .after = 3,
+      .align = "center"
+    )
+  )
+
+ggplot(growth_rate, aes(x = diagnosis_date)) +
+  geom_line(aes(y = growth_rate), alpha = 0.8) +
+  geom_line(aes(y = rolling_avg), color = "red", alpha = 0.8) +
+  theme_bw() +
+  labs(x = "Diagnosis Date", y = "Seven-day Growth Rate", 
+       title = "COVID-19 7-day Growth Rate from 1st Jun to 13th Sep (2020)") +
+  geom_vline(aes(xintercept = ymd("20200630")), linetype = "dashed", color = "purple") +
+  geom_vline(aes(xintercept = ymd("20200723")), linetype = "dashed", color = "darkblue") +
+  annotate("text", x = ymd("20200630"), y = Inf, label = "June 30", vjust = 1.5, color = "purple") +
+  annotate("text", x = ymd("20200723"), y = Inf, label = "July 23", vjust = 1.5, color = "darkblue")
+
+
+```
+
+The growth rate illustrates how quickly the number of COVID-19 infections is changing over time (i.e. quantifying the rate at which new infections are occurring during that specific time frame). For instance, a 7-day growth rate tells us how the number of infections is changing over a period of seven days. Growth rates are influenced by both the effective transmission number (R(t)) and the average duration of infectiousness (T) - this can be represented with the formula 'g = (R(t) - 1)/T'.
+
+R(t) represents how many new infections each COVID-infected person is causing on average during a specific period. If R(t) is greater than 1, this indicates that each infected person is, on average, infecting more than one other person thus leading to positive growth in the number of COVID-19 infections. In contrast, if R(t) is less than 1, this means that each infected person, on average, is infecting fewer than one person, resulting in a decrease in infections. 
+
+Meanwhile, T represents the average period during which a COVID-infected person is contagious. For instance, a longer T means that infected individuals can spread the disease for a longer time, potentially leading to a higher number of infections and a higher growth rate. Conversely, a lower T infers a reduced transmission period and a lower growth rate.
+
+Hence, understanding how both R(t) and T contribute to determining the growth rate helps assess the effectiveness of interventions and make informed decisions in controlling the COVID-19 transmission.  
+
+When comparing how the formula 'g = (R(t) - 1)/T' compares to the expression 'R(eff) = e^(rT)':
+
+- R(eff) represents the effective transmission number (i.e. the average number of new infections caused by each infectious individual in a population) whilst R(t) represents the effective transmission number but specifically at a given point in time during the infectious period.
+- rT represents the growth rate multiplied by the average generation time, which captures the time between when one person develops symptoms and when another person develops symptoms. In contrast, T in the first formula is the average duration of infectiousness, indicating the length of time an infected individual can transmit the disease.
+- 'g = (R(t) - 1)/T' directly calculates the growth rate (g) based on the effective transmission number (R(t)) and the duration of infectiousness (T); it provides a linear relationship between growth rate and effective transmission number by indicating how much the transmission number (R(t)) exceeds 1. 
+- 'R(eff) = e^(rT)' expresses the relationship between the growth rate (r) and the effective transmission number (R(eff)) as an exponential function; it shows how changes in the growth rate (r) and average generation time (T) can impact the effective transmission number. If rT increases, this leads to a higher R(eff), suggesting a greater potential for disease spread and faster growth in the number of infections. 
+
+# The S-E-I-R Model
+
+The S-E-I-R model is a compartmental model whereby each individual in a population (e.g. Victoria in this case) is divided into one (and exactly one) compartment at any one time based on their disease status. It is used to understand and predict the spread of infectious diseases such as COVID-19. Below are each compartment's explanations:
+
+- Susceptible (S): Individuals who are healthy but can be infected by the disease.
+- Exposed (E): Individuals who have been infected but are not yet infectious.
+- Infectious (I): Individuals who are infected and can transmit the disease to susceptible individuals (i.e. infectious).
+- Recovered (R): Individuals who no longer have the disease and have recovered from it.
+
+This model assumes that individuals transition from one compartment to another based on certain parameters, such as average infection/transmission rate (beta), average recovery rate (gamma) and the average rate at which exposed individuals become infectious (sigma). 
+
+There is also a sequential progression between compartments; susceptible individuals may become exposed through contact with infectious individuals ➜ exposed individuals become infectious after a certain incubation period  ➜ infectious individuals recover and acquire immunity. 
+
+By using differential equations and incorporating additional parameters, this model simulates the progression of COVID-19 over time.
+
+We can also incorporate the Victorian government interventions into the model. Assuming we use ordinary differential equation for our model, which takes three arguments (time, state, parameters), we would need to replace the time variable (t) with the respective intervention days (e.g., t > xxx) to incorporate the effects of interventions. For instance, local lockdowns would be (t > 29) to account for the intervention's effect after 30th June 2020 whereas face coverings would be (t > 52) to account for the effects after 23rd July 2020. The rate at which infections are happening (i.e. beta) also has to be modified to reflect the expected impacts of the intervention - this should be a reduction, as interventions are aimed at decreasing disease transmission.
+
+```{r VIC_filtered_data, message=F, eval=T}
+
+vic_cases_time <- vic_cases %>%
+  filter(diagnosis_date %within% plot_interval)
+
+```
+
+The ordinary differential equation for our model is as depicted below:
+
+- First conditional statement: if time(t) is greater than 29 (which represents local lockdowns intervention), transmission rate (beta) is multiplied by the efficacy factor of lockdowns (lockdowns_efficacy).
+- Second conditional statement: if time(t) is greater than 52 (which represents face coverings intervention), transmission rate (beta) is multiplied by the efficacy factor of face coverings (face_coverings_efficacy).
+
+```{r ODE, message=F, eval=T}
+
+logit <- function(x) {
+  return(log(x / (1 - x)))
+}
+
+# And its inverse
+inverse.logit <- function(x) {
+  return(exp(x) / (1 + exp(x)))
+}
+
+N <- 6503491 # Population of Victoria (taken from ABS website as cited)
+initial_infected <- 9
+initial_state <- c("S" = N - initial_infected, "E" = 0, "I" = initial_infected, "R" = 0, "incidence" = 0)
+
+```
+
+```{r ODE interventions, message=F, eval=T}
+
+COVID_withinterventions <- function(t, state, parameters) {
+  with(as.list(c(state, parameters)), { 
+    N <- S + E + I + R 
+
+    if (t > 29) { # after lockdowns
+      beta <- beta * lockdowns_efficacy
+    }
+
+    if (t > 52) { # after face coverings
+      beta <- beta * face_coverings_efficacy
+    }
+
+    dSdt <- -beta * S * I / N
+    dEdt <- beta * S * I / N - sigma * E
+    dIdt <- sigma * E - gamma * I
+    dRdt <- gamma * I
+    dIncidencedt <- sigma * E
+    return(list(
+      c(dSdt, dEdt, dIdt, dRdt, dIncidencedt)
+    ))
+  })
+}
+
+```
+
+We now make an initial guess at the parameters and incorporate our ordinary differential equation before running the model:
+
+- 'lockdowns_efficacy' parameter: efficacy value of 0.1 implies that the lockdown measures implemented are assumed to reduce the transmission rate by 90%
+- 'face_coverings_efficacy' parameter: efficacy value of 0.08 implies that the lockdown measures implemented are assumed to reduce the transmission rate by 92%
+- On average, each contact between a susceptible and infectious individual leads to a transmission with a probability of 2/3 (beta).
+- On average, an exposed individual becomes infectious and moves from the exposed compartment to the infectious compartment with a rate of 1/5 per unit of time (sigma).
+- On average, an infectious individual recovers and moves from the infectious compartment to the recovered compartment with a rate of 1/6 per unit of time (gamma).
+
+According to the plot below, we can see that our initial parameter estimates are far from their true values leading to a mismatch between our model predictions and the actual data (i.e. not a good fit). Daily COVID-19 incidences are actually still rising even after lockdown measures are implemented (30th June); in contrast, our model predicts that COVID-19 incidences will fall after lockdown interventions.
+
+```{r parameters, message=F, eval=T}
+
+parameters <- c(beta = 2/3, 
+                sigma = 1/5, 
+                gamma = 1/6, 
+                lockdowns_efficacy = 0.1, 
+                face_coverings_efficacy = 0.08)
+
+solve_times <- seq(int_start(plot_interval), int_end(plot_interval), by = "1 day")
+
+```
+
+```{r init, message=F, eval=T}
+
+out_init <- ode(
+  y = initial_state,
+  times = as.numeric(difftime(solve_times, solve_times[1], units = "days")),
+  func = COVID_withinterventions,
+  parms = parameters
+ )
+
+# Tidy model:
+
+tidy_model <- function(ode_output, start_date) {
+ as_tibble(ode_output) |>
+ mutate(
+ date = as.Date(start_date + days(time)),
+ daily_incidence = c(0, diff(incidence))
+ )
+}
+tidy_output <- tidy_model(out_init, int_start(plot_interval))
+
+```
+
+```{r initgraph, message=F, eval=T}
+
+ggplot() +
+  geom_col(
+    aes(x = diagnosis_date, y = total_cases),
+    width = 1, fill = "skyblue", colour = "blue",
+    data = vic_cases_time
+    ) +
+  geom_point(
+    aes(x = date, y = daily_incidence),
+    data = tidy_output
+    ) +
+  labs(x = "Diagnosis Date", y = "Daily COVID-19 Incidences", 
+       title = "Initial ODE Estimates") +
+  geom_vline(aes(xintercept = ymd("20200630")), linetype = "dashed", color = "red") +
+  geom_vline(aes(xintercept = ymd("20200723")), linetype = "dashed", color = "darkblue") +
+  annotate("text", x = ymd("20200630"), y = Inf, label = "June 30", vjust = 1.5, color = "red") +
+  annotate("text", x = ymd("20200723"), y = Inf, label = "July 23", vjust = 1.5, color = "darkblue")
+
+
+```
+
+# Maximum Likelihood Estimation
+
+To fit our model, we are going to use maximum likelihood estimation. 
+
+The parameters that we will be estimating are the average transmission rates (beta), the efficacy factor of lockdowns (lockdowns_efficacy), and the efficacy factor of face coverings (face_coverings_efficacy). Other parameters such as average recovery rate (gamma) and average rate at which exposed individuals become infectious (sigma) will remain fixed.
+
+```{r Poisson, message=F, eval=T}
+
+negative_log_likelihood <-
+  function(transformed_parameters, data, state, times, func, other_parameters) {
+    beta <-exp(transformed_parameters["R0"]) * other_parameters["gamma"]
+    names(beta) <- "beta"
+    lockdowns_efficacy <- inverse.logit(transformed_parameters["lockdowns_efficacy"])
+    names(lockdowns_efficacy) <- "lockdowns_efficacy"
+    face_coverings_efficacy <- inverse.logit(transformed_parameters["face_coverings_efficacy"])
+    names(face_coverings_efficacy) <- "face_coverings_efficacy"
+    
+    parameters <- c(beta, lockdowns_efficacy, face_coverings_efficacy, other_parameters)
+    out_ode <- ode(
+      y = state,
+      times = as.numeric(difftime(times, times[1], units = "days")),
+      func = func,
+      parms = parameters
+    ) %>%
+      tidy_model(start_date = times[1])
+    - sum(dpois(
+      x = data$total_cases[-1],
+      lambda = out_ode$daily_incidence[-1],
+      log = TRUE
+    ))
+  }
+
+```
+
+```{r}
+
+initial_transformed_parameters <- c("R0" = log(2), "lockdowns_efficacy" = logit(0.1), 
+                                    "face_coverings_efficacy" = logit(0.08))
+parameters <- c("gamma" = 1 / 6, "sigma" = 1 / 5)
+optimum_mle <- optim(
+  par = initial_transformed_parameters,
+  fn = negative_log_likelihood,
+  data = vic_cases_time,
+  state = initial_state,
+  times = solve_times,
+  func = COVID_withinterventions,
+  other_parameters = c(parameters["gamma"], parameters["sigma"])
+)
+
+```
+
+```{r}
+
+optimal_parameters_R0 <- c(
+  exp(optimum_mle$par["R0"]) * parameters["gamma"],
+  inverse.logit(optimum_mle$par["lockdowns_efficacy"]),
+  inverse.logit(optimum_mle$par["face_coverings_efficacy"]),
+  parameters["gamma"],
+  parameters["sigma"]
+)
+names(optimal_parameters_R0)[1] <- "beta"
+optimal_solution <- ode(
+  y = initial_state,
+  times = as.numeric(difftime(solve_times, solve_times[1], units = "days")),
+  func = COVID_withinterventions,
+  parms = optimal_parameters_R0
+) %>%
+  tidy_model(start_date = solve_times[1])
+
+ggplot() +
+  geom_col(
+    aes(x = diagnosis_date, y = total_cases),
+    width = 1, fill = "skyblue", colour = "blue",
+    data = vic_cases_time
+  ) +
+  geom_point(aes(x = date, y = daily_incidence),
+             data = optimal_solution) +
+  labs(x = "Diagnosis Date", y = "Daily COVID-19 Incidences", 
+       title = "Fitting Model with Poisson Likelihood Function") +
+  geom_vline(aes(xintercept = ymd("20200630")), linetype = "dashed", color = "red") +
+  geom_vline(aes(xintercept = ymd("20200723")), linetype = "dashed", color = "darkblue") +
+  annotate("text", x = ymd("20200630"), y = Inf, label = "June 30", vjust = 1.5, color = "red") +
+  annotate("text", x = ymd("20200723"), y = Inf, label = "July 23", vjust = 1.5, color = "darkblue")
+
+```
+
+```{r}
+
+optimal_parameters_R0
+
+```
+
+Based on our results, we get (0.703) and (0.286) as values for lockdowns_efficacy and face_coverings_efficacy respectively. After multiplying beta by these values, this indicates that:
+
+- After local lockdowns intervention, average transmission rate is greatly reduced because beta x lockdowns_efficacy (0.528 x 0.703) = 0.371 meaning that on average, the probability that each contact between a susceptible and infectious individual will lead to a transmission has fallen (in comparison to previous probability of 2/3).
+- After mandatory face coverings intervention, average transmission rate is further reduced because beta x face_coverings_efficacy (0.528 x 0.286) = 0.151. 
+- These results are consistent with the plot above, where we can see that our daily COVID-19 incidence has reduced after 23rd July 2020 (after face coverings intervention). In contrast, our daily incidence still rises even after local lockdowns are implemented on 30th June 2020. This suggests that face coverings are a more effective intervention relative to local lockdowns.
+- The decrease in daily incidence also implies that for face coverings, R0 is less than 1 (R0 = beta/gamma which is 0.151/0.167 = 0.904) meaning that on average, an individual is likely to infect 1 person over the course of their infection. Conversely, R0 is still more than 1 for local lockdowns (0.371/0.167 = 2.22) meaning that on average, an individual is likely to infect 2 people over the course of their infection.
+
+
+# Limitations with Methodology
+
+There are certain limitations with the methodology that we used in our analysis. Firstly, although our original dataset provides information on COVID-19 case counts aggregated by postcode and local government area (LGA), it does not capture the spatial and temporal granularity necessary for evaluating the impact of interventions. Assessing the effectiveness of local lockdowns and face coverings often requires more granular data, such as daily case counts at a neighborhood or suburb level/the number of infected individuals (i.e. prevalence), along with more detailed information on when and where these specific interventions were implemented (to establish a causal relationship between interventions and changes in case counts). Additionally, there may be other confounding factors influencing the trends in COVID-19 cases such as population density, healthcare capacities, mobility patterns, testing strategies, and individual behaviors. These can also impact the the spread of the virus and the effectiveness of interventions, but are not taken into account in the Victorian Health's dataset.
+
+In relation to using ODEs (ordinary differential equations) in COVID-19 predictions, one limitation includes uncertainty in parameter estimation. Estimating parameters such as average transmission rates, incubation periods, and recovery rates are challenging especially with limited data availability and evolving understanding of the COVID-19 disease. This uncertainty can affect the accuracy of our model predictions - as seen previously, our initial estimates for both lockdowns and face coverings efficacy were not optimal resulting in a bad fit for our model. To address this, using optimization such as maximizing the likelihood function is needed to find the best-fit parameters for the given data. 
+
+There are also limitations related to using the SEIR model. One of it is the fact that it is a simplified representation of the COVID-19 dynamics; by assuming a homogeneous population and homogeneous mixing, this may not accurately represent the real-world complexities of COVID-19 transmission. For instance, homogeneous mixing assumes that individuals within a population have equal and random interactions with each other (i.e. everyone in the population has an equal chance of coming into contact with any other individual). In reality, individuals do not mix uniformly as people have different social networks, interactions and varying contact patterns. Besides that, the SEIR model is sensitive to the initial values of the compartments (susceptible, exposed, infectious, recovered). Small variations in these initial conditions can lead to significant differences in the predicted outcomes - however, obtaining precise initial conditions for COVID-19 may be challenging due to under-reporting or the lack of widespread testing. 
+
+Last but not least, we need to consider the limitations of using the Poisson likelihood function. For instance, the Poisson distribution assumes that the mean and variance of the data are equal. In real-world scenarios however, the variance of COVID-19 cases may be higher/lower than the mean resulting in underdispersion (less variability) or overdispersion (more variability). Ignoring this when using Poisson likelihood function may lead to biased parameter estimates or unreliable predictions. On the other hand, negative binomial distributions can handle overdispersion as it allows for the variance to be greater than the mean - this flexibility may be well-suited for handling overdispersion in count data (i.e. where variability in COVID-19 cases may exceed what is expected).  
+
+
+
+# 📉 Data curation
+
+In relation to the [raw COVID-19 case data](https://docs.health.vic.gov.au/covid19/data/NCOV_cases_by_postcode_LGA.csv) we extracted:
+
+- **write dates like YYYY-MM-DD:** the original data is already in the format "YYYY-MM-DD" such as "2020-01-25"
+- **do not leave any cells empty:** no cells were left empty in the raw data. Any unknown values are either listed as "Unknown" or "Unincorporated Vic" (for LGA Name).
+- **put just one thing in a cell:** each cell corresponds to a single value (e.g. LGA name is in a separate cell, as well as LGA codes and postcodes instead of combining all in one cell). This allows for better analysis and distinction.
+- **organize the data as a single rectangle (with subjects as rows and variables as columns, and with a single header row):** data is consistent, with all observations as rows and variables as columns - variables are all within a single header row to identify each column as well (diagnosis_date, postcode, lga_name, lga_code, RAT_case_count, PCR_case_count, Total_case_count)
+- **create a data dictionary:** no data dictionary was provided, hence why we created one for enhancing data comprehension and documented the structure, meaning and descriptions of each data attribute/variable.
+- **do not include calculations in the raw data files:** no calculations were included in the raw data file - each row represented the daily incidence of COVID-19 cases per Local Government Authority (LGA).
+- **do not use font color or highlighting as data:** no data was specially highlighted or had a different font color - all are in standard black text. 
+- **choose good names for things:** each column/variable have easily-understandable and distinct names which also makes it easier for us to create a data dictionary. There are no spaces in variable names, with underscores being used as a replacement for spaces instead which is ideal (e.g. "diagnosis_date" instead of "diagnosis date")
+- **make backups:** it is generally assumed that government entities responsible for managing critical data like health information such as the Victorian Health Department would have measures in place to protect and back up their COVID-19 data. This is to avoid data corruption and prevent data loss in case of accidental deletion, hardware failure, or other unforeseen events. 
+- **use data validation to avoid data entry errors:** by observation, we can see that each variable and observation are in a standardised data type/format. For instance, all dates are in the format 'YYYY-MM-DD', the number of reported daily COVID-19 cases are in an acceptable range (only >0, never -1 and below), all postcodes (4 digits) and LGA codes (5 digits) are in the correct format.
+- **save the data in plain text files:** Victoria's COVID-19 data is stored as a common text-based format (i.e. a CSV file) which is widely supported and can be easily opened in various applications.
+
+# Resources
+
+Cite your data sources, and software used here: cite libraries used
+
+Australian Bureau of Statistics. (2022). Victoria: 2021 Census All persons QuickStats. Retrieved from https://www.abs.gov.au/census/find-census-data/quickstats/2021/2
+
+Broman, K. W., & Woo, K. H. (2018). Data Organization in Spreadsheets. The American Statistician, 72(1), 2-10. https://doi.org/10.1080/00031305.2017.1375989
+
+Karline Soetaert, Thomas Petzoldt, R. Woodrow Setzer (2010). Solving Differential Equations in R: Package deSolve. Journal of Statistical Software, 33(9), 1--25. doi:10.18637/jss.v033.i09
+
+Victorian Government Department of Health. (n.d.). Victorian COVID-19 data: Data downloads. Retrieved from https://www.coronavirus.vic.gov.au/victorian-coronavirus-covid-19-data
+
+Wickham, H. (2016). ggplot2: Elegant Graphics for Data Analysis. Springer-Verlag New York, 2016.
+
+Wickham H, Averick M, Bryan J, Chang W, McGowan LD, François R, Grolemund G, Hayes A, Henry L, Hester J, Kuhn M, Pedersen TL, Miller E, Bache SM, Müller K, Ooms J, Robinson D, Seidel DP, Spinu V, Takahashi K, Vaughan D, Wilke C, Woo K, Yutani H (2019). “Welcome to the tidyverse.” _Journal of Open Source Software_, *4*(43), 1686. doi:10.21105/joss.01686 <https://doi.org/10.21105/joss.01686>.
+  
+Wickham H, François R, Henry L, Müller K, Vaughan D (2023). _dplyr: A Grammar of Data Manipulation_. R package version 1.1.2, <https://CRAN.R-project.org/package=dplyr>.
+
+Wickham H, Hester J, Bryan J (2023). _readr: Read Rectangular Text Data_. R package version 2.1.4, <https://CRAN.R-project.org/package=readr>.
+
+Xie Y (2023). _bookdown: Authoring Books and Technical Documents with R Markdown_. R package version 0.33, <https://github.com/rstudio/bookdown>.
+

@@ -1,0 +1,6 @@
+"0",""
+"0","vic_cases <- vic_case_data %>%"
+"0","  group_by(diagnosis_date) %>%"
+"0","  summarise(total_cases = sum(Total_case_count))"
+"0",""
+"0","vic_cases"
